@@ -1,0 +1,45 @@
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
+import {
+  IsBoolean,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
+import { PartCategory } from '../../../../domain/parts/enums/part-category.enum';
+
+export class ListPartsQuery {
+  @ApiPropertyOptional({ enum: PartCategory })
+  @IsEnum(PartCategory)
+  @IsOptional()
+  category?: PartCategory;
+
+  @ApiPropertyOptional()
+  @Transform(({ value }: { value: unknown }) => value === 'true')
+  @IsBoolean()
+  @IsOptional()
+  active?: boolean;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  search?: string;
+
+  @ApiPropertyOptional({ minimum: 1, default: 1 })
+  @Transform(({ value }: { value: unknown }) => parseInt(String(value), 10))
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  page?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 100, default: 20 })
+  @Transform(({ value }: { value: unknown }) => parseInt(String(value), 10))
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  @IsOptional()
+  limit?: number;
+}
