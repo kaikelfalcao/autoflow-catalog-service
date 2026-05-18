@@ -106,7 +106,10 @@ describe('CanonicalLogInterceptor', () => {
   it('emite error com payload error.* quando handler lança Error tipado', async () => {
     const req = { headers: {}, method: 'PUT', url: '/x', path: '/x' };
     const res = { statusCode: 200 };
-    const err = Object.assign(new Error('boom'), { status: 500, code: 'E_BOOM' });
+    const err = Object.assign(new Error('boom'), {
+      status: 500,
+      code: 'E_BOOM',
+    });
     const next = { handle: () => throwError(() => err) };
 
     await expect(

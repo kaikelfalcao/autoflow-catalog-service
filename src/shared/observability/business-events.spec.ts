@@ -8,10 +8,7 @@ jest.mock(
 );
 
 import newrelicMod from 'newrelic';
-import {
-  recordBusinessEvent,
-  recordSagaCompensation,
-} from './business-events';
+import { recordBusinessEvent, recordSagaCompensation } from './business-events';
 
 const newrelic = newrelicMod as unknown as {
   recordCustomEvent: jest.Mock;
@@ -25,20 +22,26 @@ describe('business-events', () => {
   it('recordBusinessEvent envia eventType, eventName e service derivado da env', () => {
     process.env.NEW_RELIC_APP_NAME = 'catalog-service';
     recordBusinessEvent('Test', { foo: 'bar' });
-    expect(newrelic.recordCustomEvent).toHaveBeenCalledWith('AutoflowBizEvent', {
-      eventName: 'Test',
-      service: 'catalog-service',
-      foo: 'bar',
-    });
+    expect(newrelic.recordCustomEvent).toHaveBeenCalledWith(
+      'AutoflowBizEvent',
+      {
+        eventName: 'Test',
+        service: 'catalog-service',
+        foo: 'bar',
+      },
+    );
   });
 
   it('usa "unknown" quando NEW_RELIC_APP_NAME não está definida', () => {
     delete process.env.NEW_RELIC_APP_NAME;
     recordBusinessEvent('Test');
-    expect(newrelic.recordCustomEvent).toHaveBeenCalledWith('AutoflowBizEvent', {
-      eventName: 'Test',
-      service: 'unknown',
-    });
+    expect(newrelic.recordCustomEvent).toHaveBeenCalledWith(
+      'AutoflowBizEvent',
+      {
+        eventName: 'Test',
+        service: 'unknown',
+      },
+    );
   });
 
   it('sanitize ignora undefined/null e serializa Date como ISO-8601', () => {
@@ -51,10 +54,12 @@ describe('business-events', () => {
       flag: true,
       count: 42,
     });
-    const payload = newrelic.recordCustomEvent.mock.calls[0][1] as Record<
-      string,
-      unknown
-    >;
+    const payload = (
+      newrelic.recordCustomEvent.mock.calls[0] as unknown as [
+        string,
+        Record<string, unknown>,
+      ]
+    )[1];
     expect(payload.keep).toBe('yes');
     expect(payload.flag).toBe(true);
     expect(payload.count).toBe(42);
