@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { recordBusinessEvent } from '../../shared/observability/business-events';
 import {
   PART_REPO,
   RESERVATION_REPO,
@@ -90,6 +91,15 @@ export class StockService {
         osId: cmd.osId,
         failures,
       });
+      for (const f of failures) {
+        recordBusinessEvent('StockInsufficient', {
+          sagaId: cmd.sagaId,
+          osId: cmd.osId,
+          partId: f.partId,
+          requested: f.requested,
+          available: f.available,
+        });
+      }
       return;
     }
 
@@ -129,6 +139,16 @@ export class StockService {
       osId: cmd.osId,
       reservationId: saved.id,
     });
+
+    for (const item of cmd.items) {
+      recordBusinessEvent('StockReserved', {
+        sagaId: cmd.sagaId,
+        osId: cmd.osId,
+        reservationId: saved.id,
+        partId: item.partId,
+        quantity: item.quantity,
+      });
+    }
   }
 
   async consumeStock(cmd: ConsumeStockCommand): Promise<void> {
@@ -169,6 +189,13 @@ export class StockService {
           currentStock: part.stockQuantity,
           minimumStock: part.minimumStock,
         });
+        recordBusinessEvent('StockLowAlert', {
+          partId: part.id,
+          sku: part.sku.value,
+          name: part.name,
+          currentStock: part.stockQuantity,
+          minimumStock: part.minimumStock,
+        });
       }
 
       await this.partRepo.update(part);
@@ -192,6 +219,16 @@ export class StockService {
       osId: cmd.osId,
       reservationId: reservation.id,
     });
+
+    for (const item of reservation.items) {
+      recordBusinessEvent('StockConsumed', {
+        sagaId: cmd.sagaId,
+        osId: cmd.osId,
+        reservationId: reservation.id,
+        partId: item.partId,
+        quantity: item.quantity,
+      });
+    }
   }
 
   async releaseReservation(cmd: ReleaseReservationCommand): Promise<void> {
