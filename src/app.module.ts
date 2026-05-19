@@ -2,10 +2,9 @@ import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { RabbitMQModule } from '@golevelup/nestjs-rabbitmq';
-import { WinstonModule } from 'nest-winston';
 import { TerminusModule } from '@nestjs/terminus';
 import { validateEnv } from './shared/config/env.config';
-import { winstonConfig } from './shared/logger/winston.config';
+import { LoggerModule } from './shared/logger/logger.module';
 import { CorrelationIdMiddleware } from './shared/middlewares/correlation-id.middleware';
 import { PartsModule } from './infrastructure/http/parts/parts.module';
 import { ServicesModule } from './infrastructure/http/services/services.module';
@@ -14,7 +13,7 @@ import { HealthController } from './infrastructure/http/health/health.controller
 @Module({
   imports: [
     ConfigModule.forRoot({ validate: validateEnv, isGlobal: true }),
-    WinstonModule.forRoot(winstonConfig),
+    LoggerModule,
     MongooseModule.forRoot(process.env.MONGODB_URI!),
     {
       ...RabbitMQModule.forRoot({

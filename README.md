@@ -1,98 +1,189 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# autoflow-catalog-service
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+> Microsserviço de **catálogo de peças e serviços** com controle de estoque saga-aware do ecossistema **autoflow** (FIAP Tech Challenge — Fase 4).
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Dois subdomínios em um mesmo serviço:
 
-## Description
+- **Parts** — peças/insumos com controle de estoque físico em duas fases (reserve → consume) e compensação (release).
+- **Services** — serviços oferecidos pela oficina (troca de óleo, alinhamento, …), apenas CRUD.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+Parts participam do **Saga Pattern** orquestrado pelo `saga-orchestrator`; Services são apenas consultados pelos demais.
 
-## Project setup
+---
 
-```bash
-$ npm install
+## 🧱 Stack
+
+| Camada       | Tecnologia                                |
+|--------------|-------------------------------------------|
+| Runtime      | Node.js 24 (LTS)                          |
+| Linguagem    | TypeScript (strict)                       |
+| Framework    | NestJS 11                                 |
+| Banco        | MongoDB 7 (Mongoose)                      |
+| Mensageria   | RabbitMQ (`@golevelup/nestjs-rabbitmq`)   |
+| Observ.      | New Relic APM + canonical logs (Winston)  |
+| Testes       | Jest + mongodb-memory-server + Cucumber   |
+| Container    | Docker multi-stage                        |
+| Deploy       | EKS via GitHub Actions                    |
+
+---
+
+## 🏛️ Arquitetura
+
+**Hexagonal (Ports & Adapters)** com DDD-lite. Domínio em TypeScript puro — nenhum import de framework dentro de `src/domain/**`.
+
+```
+src/
+├── domain/                       ← núcleo, zero dependência externa
+│   ├── parts/                    ← Part, StockReservation, StockMovement, VOs, ports
+│   ├── services/                 ← Service, Money, EstimatedDuration, ports
+│   └── shared/                   ← DomainEvent, errors
+├── application/                  ← services de aplicação (não use-cases individuais)
+│   ├── parts/                    ← StockService, PartCatalogService
+│   └── services/                 ← ServiceCatalogService
+├── infrastructure/               ← adapters
+│   ├── database/                 ← schemas Mongoose + mappers + repositórios
+│   ├── messaging/
+│   │   ├── consumers/            ← stock-saga.consumer (3 commands)
+│   │   ├── publishers/           ← rabbitmq-saga-reply.publisher
+│   │   └── dlq/                  ← dlq.consumer (logging only)
+│   └── http/
+│       ├── parts/                ← PartsController + DTOs
+│       ├── services/             ← ServicesController + DTOs
+│       └── health/               ← HealthController
+└── shared/                       ← config, filters, logger, middlewares, observability
 ```
 
-## Compile and run the project
+Exchanges declaradas no `AppModule`: `oficina.commands`, `oficina.replies`, `oficina.alerts`, `oficina.dlx`.
+
+---
+
+## 🌐 Endpoints REST (via Kong → `/catalog/*`)
+
+### Parts
+| Método | Path                                | Descrição                                  |
+|--------|-------------------------------------|--------------------------------------------|
+| GET    | `/parts`                            | Listagem (query: category, active, search, page, limit) |
+| GET    | `/parts/low-stock`                  | Peças com estoque ≤ mínimo                 |
+| GET    | `/parts/:id`                        | Detalhe (com `availableQuantity` calculado)|
+| GET    | `/parts/:id/movements`              | Histórico de movimentações                 |
+| POST   | `/parts`                            | Criar (SKU auto-gerado)                    |
+| PUT    | `/parts/:id`                        | Atualizar dados não-quantitativos          |
+| PATCH  | `/parts/:id/replenish`              | Repor estoque (+ reset low-stock flag)     |
+| PATCH  | `/parts/:id/adjust`                 | Ajuste manual de inventário                |
+| DELETE | `/parts/:id`                        | Soft-delete (bloqueado se reservas ACTIVE) |
+| GET    | `/os/:osId`                         | Reservas de uma OS                         |
+
+### Services
+| Método | Path                                | Descrição                                  |
+|--------|-------------------------------------|--------------------------------------------|
+| GET    | `/services`                         | Listagem                                   |
+| GET    | `/services/:id`                     | Detalhe                                    |
+| POST   | `/services`                         | Criar                                      |
+| PUT    | `/services/:id`                     | Atualizar                                  |
+| DELETE | `/services/:id`                     | Soft-delete                                |
+
+Swagger em `/api/docs`.
+
+---
+
+## 📬 Eventos RabbitMQ
+
+### Consumidos — `oficina.commands` (topic)
+
+| Routing key                  | Ação                                                          |
+|------------------------------|---------------------------------------------------------------|
+| `stock.reserve-stock`        | Tenta reservar (publica reserved ou insufficient)             |
+| `stock.consume-stock`        | Decrementa stockQuantity + reservedQuantity (publica consumed)|
+| `stock.release-reservation`  | Libera reserva ativa (publica reservation-released)           |
+
+### Publicados — `oficina.replies` & `oficina.alerts`
+
+| Exchange          | Routing key                   | Quando                                  |
+|-------------------|-------------------------------|-----------------------------------------|
+| `oficina.replies` | `stock.stock-reserved`        | Reserva bem-sucedida                    |
+| `oficina.replies` | `stock.stock-insufficient`    | Estoque insuficiente (com lista)        |
+| `oficina.replies` | `stock.stock-consumed`        | Consumo confirmado                      |
+| `oficina.replies` | `stock.reservation-released`  | Reserva liberada (compensação)          |
+| `oficina.alerts`  | `stock.low-stock-alert`       | Peça cruzou o mínimo (1× por ciclo)     |
+
+**DLQ:** cada fila tem `x-dead-letter-exchange: oficina.dlx`. Após 3 retries com backoff (1s, 5s, 25s), mensagem vai para DLQ. O `DLQConsumer` apenas **loga** — não reprocessa.
+
+---
+
+## 🧠 Regras de domínio críticas
+
+- **Reserva em duas fases**: `reservedQuantity` é incrementado no reserve; `stockQuantity` é decrementado apenas no consume. `availableQuantity = stockQuantity − reservedQuantity`.
+- **Idempotência via sagaId**: índice único em `reservations.sagaId`. O `StockService` verifica idempotência **antes** de processar — se `sagaId` já existe com status ACTIVE, republica a reply original sem reprocessar.
+- **Low-stock alert one-shot**: a entidade `Part` mantém flag `lowStockAlertSent`. Emite só ao **cruzar** o mínimo; `replenish` acima do mínimo reseta a flag.
+- **StockMovement append-only**: cada operação cria um `StockMovement` imutável (type IN / OUT / RESERVE / RELEASE).
+- **Lock otimista** via `versionKey` do Mongoose — sem MongoDB transactions.
+- **Domínio puro**: nada em `src/domain/**` importa de `mongoose`, `amqplib`, `@nestjs/*` ou qualquer framework.
+
+---
+
+## 🔧 Variáveis de ambiente
+
+| Variável                | Default                                   | Descrição              |
+|-------------------------|-------------------------------------------|------------------------|
+| `PORT`                  | `3003`                                    | porta HTTP             |
+| `MONGODB_URI`           | `mongodb://localhost:27017/catalog`       | conexão Mongo          |
+| `RABBITMQ_URL`          | `amqp://admin:admin@localhost:5672`       | conexão RMQ            |
+| `RABBITMQ_PREFETCH`     | `10`                                      | mensagens em flight   |
+| `CORRELATION_ID_HEADER` | `x-correlation-id`                        |                        |
+| `NEW_RELIC_LICENSE_KEY` | —                                         | (opcional) APM         |
+
+Validação via `class-validator` em `EnvConfig` — app **não sobe** sem as obrigatórias.
+
+---
+
+## 🚀 Rodar localmente
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+docker compose up -d        # Mongo + RMQ
+npm install
+npm run start:dev
 ```
 
-## Run tests
+Ou integrado via `autoflow-infra/local/bootstrap.sh`.
+
+---
+
+## 🧪 Testes
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+npm run test           # unit
+npm run test:cov       # threshold 80% global
+npm run test:integration  # mongodb-memory-server
+npm run test:bdd       # Cucumber
+npm run test:e2e       # supertest
+npm run lint           # ESLint (TS strict)
 ```
 
-## Deployment
+**Coverage atual:** **96.79 / 85.04 / 95.74 / 97.02** (statements / branches / functions / lines).
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+> **TODO:** SonarQube Community.
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+---
 
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
-```
+## 🐳 Docker / ☸️ Deploy
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+| Workflow | Trigger                          | Jobs                              |
+|----------|----------------------------------|-----------------------------------|
+| `ci.yml` | push/PR em qualquer branch       | lint + test:cov + bdd             |
+| `cd.yml` | `workflow_run` (CI ok em `main`) | DockerHub + EKS rollout           |
 
-## Resources
+Imagem: `kaikelfalcao/autoflow-catalog:<sha>`. Cluster `autoflow-dev-eks` / namespace `autoflow`.
 
-Check out a few resources that may come in handy when working with NestJS:
+---
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+## 📊 Observabilidade
 
-## Support
+- Logs canônicos por request HTTP **e** por evento RMQ (com `correlationId`, `sagaId`, `partId`, `reservationId`).
+- Custom events no New Relic: `StockReserved`, `StockInsufficient`, `LowStockAlert`, `SagaCompensation`.
+- DLQ logada (sem reprocessar) — investigação manual via collection `dlq`.
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+---
 
-## Stay in touch
+## 🔗 Ecossistema
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+[`autoflow-infra`](https://github.com/kaikelfalcao/autoflow-infra) · [`autoflow-identity-service`](https://github.com/kaikelfalcao/autoflow-identity-service) · [`autoflow-order-service`](https://github.com/kaikelfalcao/autoflow-order-service) · [`autoflow-payment-service`](https://github.com/kaikelfalcao/autoflow-payment-service) · [`autoflow-saga-orchestrator`](https://github.com/kaikelfalcao/autoflow-saga-orchestrator) · [`autoflow-notification-service`](https://github.com/kaikelfalcao/autoflow-notification-service)
