@@ -4,7 +4,10 @@ import newrelicMod from 'newrelic';
 import { recordBusinessEvent, recordSagaCompensation } from './business-events';
 
 interface NewRelicMock {
-  recordCustomEvent: (eventType: string, attrs: Record<string, unknown>) => void;
+  recordCustomEvent: (
+    eventType: string,
+    attrs: Record<string, unknown>,
+  ) => void;
 }
 
 const newrelic = newrelicMod as unknown as NewRelicMock;
