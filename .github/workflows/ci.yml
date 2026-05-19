@@ -56,6 +56,14 @@ jobs:
       - run: npm run test:cov
       - run: npm run test:bdd --if-present
 
+      - name: Validate SonarQube token
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          test -n "$SONAR_TOKEN"
+          curl -fsS -u "${SONAR_TOKEN}:" https://sonarcloud.io/api/authentication/validate
+          curl -fsS -H "Authorization: Bearer ${SONAR_TOKEN}" "https://api.sonarcloud.io/analysis/jres?os=linux&arch=x86_64" >/dev/null
+
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995
         env:
