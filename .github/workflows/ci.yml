@@ -11,12 +11,16 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+permissions:
+  contents: read
+  pull-requests: read
+
 env:
-  NODE_VERSION: '24'
+  NODE_VERSION: "22"
 
 jobs:
-  sonarqube:
-    name: SonarQube
+  CI:
+    name: CI pipeline
     runs-on: ubuntu-latest
 
     services:
@@ -36,40 +40,54 @@ jobs:
     env:
       MONGODB_URI: mongodb://localhost:27017/catalog_test
       RABBITMQ_URL: amqp://admin:admin@localhost:5672
-      RABBITMQ_PREFETCH: '10'
+      RABBITMQ_PREFETCH: "10"
       CORRELATION_ID_HEADER: x-correlation-id
       NODE_ENV: test
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - run: npm ci
-      - run: npm run lint --if-present
-      - run: npm run format:check --if-present
-      - run: npm run test:cov
-      - run: npm run test:bdd --if-present
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Validate SonarQube token
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Format check
+        run: npm run format:check --if-present
+
+      - name: Unit tests
+        run: npm run test:cov
+
+      - name: BDD tests
+        run: npm run test:bdd --if-present
+
+      - name: Validate Sonar token
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           test -n "$SONAR_TOKEN"
-          curl -fsS -u "${SONAR_TOKEN}:" https://sonarcloud.io/api/authentication/validate
-          curl -fsS -H "Authorization: Bearer ${SONAR_TOKEN}" "https://api.sonarcloud.io/analysis/jres?os=linux&arch=x86_64" >/dev/null
 
-      - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995
+          curl -fsS \
+            -u "${SONAR_TOKEN}:" \
+            https://sonarcloud.io/api/authentication/validate
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: coverage
